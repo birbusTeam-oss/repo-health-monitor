@@ -24,6 +24,35 @@ from .github_tools import (
     generate_health_report,
 )
 
+
+def _get_model():
+    """Determine the LLM model provider based on environment.
+
+    Priority:
+    1. OLLAMA_HOST + OLLAMA_MODEL → OllamaModel (local or cloud Ollama)
+    2. ANTHROPIC_API_KEY → Anthropic direct API
+    3. Default: Bedrock (Claude Sonnet 4) — requires AWS credentials
+    """
+    ollama_host = os.environ.get("OLLAMA_HOST")
+    ollama_model = os.environ.get("OLLAMA_MODEL")
+
+    if ollama_host and ollama_model:
+        from strands.models.ollama import OllamaModel
+        return OllamaModel(
+            host=ollama_host,
+            model_id=ollama_model,
+        )
+
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        from strands.models.anthropic import AnthropicModel
+        return AnthropicModel(
+            client_args={"api_key": os.environ["ANTHROPIC_API_KEY"]},
+            model_id="claude-sonnet-4-20250514",
+        )
+
+    # Default: Bedrock (Claude Sonnet 4 via AWS)
+    return None  # Strands defaults to Bedrock
+
 # System prompt — defines the agent's persona and behavior
 SYSTEM_PROMPT = """You are the Repo Health Monitor, an AI agent built with the Strands Agents SDK.
 
@@ -56,13 +85,15 @@ def create_agent() -> Agent:
     - Slack notification capability
     - Report generation tool
     - A system prompt defining its monitoring role
+    - Auto-detected model provider (Ollama, Anthropic, or Bedrock)
 
     Returns:
         A Strands Agent instance ready to monitor repositories.
     """
-    return Agent(
-        system_prompt=SYSTEM_PROMPT,
-        tools=[
+    model = _get_model()
+    kwargs = {
+        "system_prompt": SYSTEM_PROMPT,
+        "tools": [
             list_open_pull_requests,
             check_ci_status,
             list_stale_issues,
@@ -70,7 +101,10 @@ def create_agent() -> Agent:
             send_slack_summary,
             generate_health_report,
         ],
-    )
+    }
+    if model is not None:
+        kwargs["model"] = model
+    return Agent(**kwargs)
 
 
 # Module-level agent instance for import convenience
